@@ -22,6 +22,7 @@ jobs:
           echo "VITE_FIREBASE_STORAGE_BUCKET=${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}" >> .env
           echo "VITE_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}" >> .env
           echo "VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}" >> .env
+          echo "VITE_WORKER_SECRET_TOKEN=${{ secrets.VITE_WORKER_SECRET_TOKEN }}" >> .env
 
       - name: Install dependencies and build
         run: npm ci && npm run build
