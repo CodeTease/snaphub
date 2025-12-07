@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Upload, Search, FileArchive, 
   CheckCircle, AlertCircle, Copy, Download, 
   Loader2, LogOut, Menu, X, Box, Trash2,
-  Clock, HardDrive, ArrowRight, Eye, FileCode, Image as ImageIcon, File
+  Clock, HardDrive, ArrowRight, Eye, FileCode, Image as ImageIcon, File, Tag, User, Calendar
 } from 'lucide-react';
 
 // --- FIREBASE SETUP ---
@@ -14,8 +14,7 @@ import {
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged,
-  signInWithCustomToken,
-  signInAnonymously
+  signInWithCustomToken
 } from "firebase/auth";
 import { 
   getFirestore, 
@@ -29,19 +28,30 @@ import {
 } from "firebase/firestore";
 
 // --- CONFIGURATION ---
+// Safe environment variable access for ES2015 targets
+const getEnv = () => {
+  try {
+    return import.meta.env || {};
+  } catch (e) {
+    return {};
+  }
+};
+
+const env = getEnv();
+
 // Fallback to empty string if env vars are missing to prevent crash during init
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || ""
+  apiKey: env.VITE_FIREBASE_API_KEY || "",
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: env.VITE_FIREBASE_APP_ID || ""
 };
 
 const WORKER_URL = "https://snap-hub-worker.whysos482.workers.dev";
-const SECRET_TOKEN = import.meta.env.VITE_WORKER_SECRET_TOKEN;
-const VEGH_WORKER_PATH = "/worker.js"; // Path to your public/worker.js
+const SECRET_TOKEN = env.VITE_WORKER_SECRET_TOKEN;
+const VEGH_WORKER_PATH = "/worker.js"; 
 
 // Initialize Firebase
 let auth, db;
@@ -50,6 +60,8 @@ try {
     const app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+  } else {
+    console.warn("Firebase Config missing. Check .env variables.");
   }
 } catch (e) {
   console.error("Firebase init failed", e);
@@ -75,7 +87,6 @@ const Toast = ({ message, type, onClose }) => {
 const LoginScreen = ({ onLogin }) => (
   <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
      <div className="max-w-md w-full text-center bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl relative overflow-hidden">
-        {/* Decorative background element */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500"></div>
         
         <div className="w-20 h-20 bg-gradient-to-br from-emerald-400 to-cyan-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-500/20">
@@ -95,7 +106,7 @@ const LoginScreen = ({ onLogin }) => (
         
         {!SECRET_TOKEN && (
              <div className="mt-6 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-400 text-xs font-mono text-left">
-                <strong>Config Error:</strong> SECRET_TOKEN is missing in environment variables.
+                <strong>Config Error:</strong> SECRET_TOKEN is missing.
              </div>
         )}
      </div>
@@ -121,13 +132,14 @@ export default function App() {
   const [isInspecting, setIsInspecting] = useState(false);
   
   // Viewer States (VeghJS Integration)
-  const [viewMode, setViewMode] = useState(false); // Toggle between Meta/View
+  const [viewMode, setViewMode] = useState(false);
   const [veghFiles, setVeghFiles] = useState([]);
+  const [liveMeta, setLiveMeta] = useState(null); // New state for Real-time Metadata
   const [currentContent, setCurrentContent] = useState(null);
   const [currentPath, setCurrentPath] = useState(null);
   const [isWorkerReady, setIsWorkerReady] = useState(false);
   const [loadingContent, setLoadingContent] = useState(false);
-  const [viewerBlob, setViewerBlob] = useState(null); // Keep the blob in memory
+  const [viewerBlob, setViewerBlob] = useState(null); 
 
   const [mySnaps, setMySnaps] = useState([]);
   const [loadingSnaps, setLoadingSnaps] = useState(false);
@@ -137,7 +149,6 @@ export default function App() {
 
   // --- INIT WORKER & AUTH ---
   useEffect(() => {
-    // Init VeghJS Worker
     try {
         workerRef.current = new Worker(VEGH_WORKER_PATH, { type: 'module' });
         workerRef.current.onmessage = (e) => {
@@ -149,8 +160,12 @@ export default function App() {
                 setVeghFiles(payload.sort((a, b) => a.path.localeCompare(b.path)));
                 setLoadingContent(false);
             } else if (type === 'RESULT_FILE_CONTENT') {
-                setCurrentContent(payload.data); // Uint8Array
+                setCurrentContent(payload.data);
                 setLoadingContent(false);
+            } else if (type === 'RESULT_METADATA') {
+                // Receive real metadata from WASM core
+                setLiveMeta(payload);
+                console.log("🥬 Live Metadata Hydrated:", payload);
             } else if (type === 'ERROR') {
                 showToast(`Worker Error: ${payload}`, 'error');
                 setLoadingContent(false);
@@ -160,10 +175,8 @@ export default function App() {
         console.error("Worker init failed", err);
     }
 
-    // Init Auth
     if (!auth) { setLoadingAuth(false); return; }
     
-    // Check for custom token from environment (CodeTease standard)
     const initAuth = async () => {
         if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
             try { await signInWithCustomToken(auth, window.__initial_auth_token); } catch(e) { console.error(e); }
@@ -184,7 +197,6 @@ export default function App() {
 
   const showToast = (msg, type = 'info') => setToast({ message: msg, type, id: Date.now() });
 
-  // --- API ---
   const authenticatedFetch = async (endpoint, options = {}) => {
     if (!SECRET_TOKEN) throw new Error("Missing Token");
     const headers = { ...(options.headers || {}), 'Authorization': `Bearer ${SECRET_TOKEN}` };
@@ -194,7 +206,6 @@ export default function App() {
     return res;
   };
 
-  // --- HANDLERS ---
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!selectedFile || !user) return;
@@ -256,7 +267,8 @@ export default function App() {
   const performInspect = async (id) => {
     setIsInspecting(true); 
     setInspectData(null);
-    setViewMode(false); // Reset view mode
+    setLiveMeta(null); // Reset live data
+    setViewMode(false); 
     setVeghFiles([]);
     
     try {
@@ -264,7 +276,7 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
           setInspectData(data.data);
-          setActiveTab('inspect'); // Switch tab if called from My Snaps
+          setActiveTab('inspect'); 
           setSearchId(id);
       } else throw new Error(data.error);
     } catch (err) { showToast(err.message, 'error'); } 
@@ -287,16 +299,22 @@ export default function App() {
       setLoadingContent(true);
       
       try {
-          // Fetch blob for viewing (keep in memory)
           const res = await authenticatedFetch(`/${inspectData.snapId}/content`);
           const blob = await res.blob();
           setViewerBlob(blob);
 
-          // Send to worker to list files
+          // 1. Get List Files
           workerRef.current.postMessage({
               command: 'LIST_FILES',
               payload: { file: blob }
           });
+
+          // 2. Get Real-time Metadata (Fix for incorrect DB data)
+          workerRef.current.postMessage({
+              command: 'GET_METADATA',
+              payload: { file: blob }
+          });
+
       } catch (err) {
           showToast("Failed to load viewer data", "error");
           setViewMode(false);
@@ -314,22 +332,18 @@ export default function App() {
       });
   };
 
-  // Render content helper
   const renderContentPreview = () => {
       if (loadingContent) return <div className="flex items-center justify-center h-full text-slate-500 gap-2"><Loader2 className="animate-spin"/> Extracting...</div>;
       if (!currentContent) return <div className="flex items-center justify-center h-full text-slate-600">Select a file to preview</div>;
 
       const ext = currentPath?.split('.').pop().toLowerCase();
       
-      // Image
       if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
           const blob = new Blob([currentContent], { type: `image/${ext === 'svg' ? 'svg+xml' : ext}` });
           const url = URL.createObjectURL(blob);
           return <div className="flex items-center justify-center h-full bg-[url('https://transparenttextures.com/patterns/cubes.png')] bg-slate-900"><img src={url} className="max-w-full max-h-full shadow-lg rounded" alt="Preview"/></div>;
       }
 
-      // Text / Code
-      // Simple heuristic: check for null bytes to detect binary
       let isBinary = false;
       for (let i = 0; i < Math.min(currentContent.length, 50); i++) {
           if (currentContent[i] === 0) { isBinary = true; break; }
@@ -366,14 +380,27 @@ export default function App() {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + ['B', 'KB', 'MB', 'GB'][i];
   }
 
+  // Helper to merge DB data with Live data
+  const getDisplayMeta = () => {
+     if (!inspectData) return {};
+     if (!liveMeta) return inspectData; // Fallback to DB if live not ready
+     // Merge live data over DB data for correctness
+     return {
+         ...inspectData,
+         format_version: liveMeta.format_version,
+         tool_version: liveMeta.tool_version,
+         author: liveMeta.author || inspectData.username // Prefer internal author
+     };
+  };
+
+  const displayMeta = getDisplayMeta();
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-emerald-600"><Loader2 className="animate-spin" size={32}/></div>;
   if (!user) return <LoginScreen onLogin={() => signInWithPopup(auth, new GoogleAuthProvider()).catch(e => showToast(e.message, 'error'))} />;
 
-  // --- UI COMPONENTS ---
   const SidebarItem = ({ id, icon: Icon, label }) => (
     <button 
-      onClick={() => { setActiveTab(id); setMobileMenuOpen(false); if(id!=='inspect') {setInspectData(null); setViewMode(false);} }}
+      onClick={() => { setActiveTab(id); setMobileMenuOpen(false); if(id!=='inspect') {setInspectData(null); setLiveMeta(null); setViewMode(false);} }}
       className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-all ${activeTab === id ? 'bg-emerald-600/10 text-emerald-500 border border-emerald-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-900'}`}
     >
       <Icon size={18} />
@@ -595,13 +622,15 @@ export default function App() {
                         <div className="flex items-start justify-between mb-6">
                            <div>
                               <div className="text-2xl font-bold text-white mb-1 flex items-center gap-3">
-                                  {inspectData.originalFilename}
-                                  <span className="bg-emerald-500/10 text-emerald-500 text-xs px-2 py-1 rounded border border-emerald-500/20">v{inspectData.format_version || '1'}</span>
+                                  {displayMeta.originalFilename}
+                                  <span className={`text-xs px-2 py-1 rounded border font-bold ${liveMeta ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                                      {liveMeta ? 'LIVE' : 'CACHED'} v{displayMeta.format_version || '1'}
+                                  </span>
                               </div>
                               <div className="flex items-center gap-2 text-slate-400">
-                                 <span>@{inspectData.username}</span>
+                                 <span>@{displayMeta.author || displayMeta.username}</span>
                                  <span>•</span>
-                                 <span className="font-mono text-xs">{inspectData.snapId}</span>
+                                 <span className="font-mono text-xs">{displayMeta.snapId}</span>
                               </div>
                            </div>
                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
@@ -612,22 +641,22 @@ export default function App() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                               <div className="text-xs text-slate-500 font-bold uppercase mb-1">Size</div>
-                              <div className="text-white font-mono">{(inspectData.fileSize/1024).toFixed(2)} KB</div>
+                              <div className="text-white font-mono">{(displayMeta.fileSize/1024).toFixed(2)} KB</div>
                            </div>
                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                               <div className="text-xs text-slate-500 font-bold uppercase mb-1">Tool</div>
-                              <div className="text-white">{inspectData.tool_version || "Unknown"}</div>
+                              <div className="text-white">{displayMeta.tool_version || "Unknown"}</div>
                            </div>
                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 col-span-2">
                               <div className="text-xs text-slate-500 font-bold uppercase mb-1">Created</div>
-                              <div className="text-white">{new Date(inspectData.uploadedAt).toLocaleString()}</div>
+                              <div className="text-white">{new Date(displayMeta.uploadedAt).toLocaleString()}</div>
                            </div>
                         </div>
                         
-                        {inspectData.description && (
+                        {displayMeta.description && (
                             <div className="mb-8 p-4 bg-slate-950/50 rounded-xl border border-slate-800/50">
                                 <div className="text-xs text-slate-500 font-bold uppercase mb-2">Description</div>
-                                <p className="text-slate-300 italic">"{inspectData.description}"</p>
+                                <p className="text-slate-300 italic">"{displayMeta.description}"</p>
                             </div>
                         )}
 
@@ -636,7 +665,7 @@ export default function App() {
                               {isWorkerReady ? <Eye size={20}/> : <Loader2 className="animate-spin" size={20}/>}
                               <span>{isWorkerReady ? "Live Preview (VeghJS)" : "Loading Core..."}</span>
                            </button>
-                           <button onClick={() => handleDownload(inspectData.snapId, inspectData.originalFilename)} className="w-full bg-slate-800 hover:bg-slate-700 text-white py-4 rounded-xl font-bold text-base transition-colors flex items-center justify-center gap-2">
+                           <button onClick={() => handleDownload(displayMeta.snapId, displayMeta.originalFilename)} className="w-full bg-slate-800 hover:bg-slate-700 text-white py-4 rounded-xl font-bold text-base transition-colors flex items-center justify-center gap-2">
                               <Download size={20}/> <span>Download Archive</span>
                            </button>
                         </div>
@@ -652,6 +681,28 @@ export default function App() {
                                   <span className="font-bold text-white text-sm">Explorer</span>
                                   <button onClick={() => setViewMode(false)} className="text-xs text-slate-500 hover:text-white">Close</button>
                               </div>
+                              
+                              {/* LIVE METADATA IN EXPLORER */}
+                              {liveMeta && (
+                                <div className="p-3 bg-emerald-900/10 border-b border-slate-900">
+                                    <div className="flex items-center gap-2 text-xs text-emerald-500 font-bold mb-2">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                                        LIVE METADATA
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                                            <Tag size={12}/> <span>Format: <b>v{liveMeta.format_version}</b></span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                                            <HardDrive size={12}/> <span>Tool: <b>{liveMeta.tool_version}</b></span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                                            <User size={12}/> <span>Author: <b>{liveMeta.author}</b></span>
+                                        </div>
+                                    </div>
+                                </div>
+                              )}
+
                               <div className="flex-1 overflow-y-auto p-2">
                                   {loadingContent && veghFiles.length === 0 ? (
                                       <div className="flex flex-col items-center justify-center h-40 text-slate-600">
