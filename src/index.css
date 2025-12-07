@@ -6,7 +6,14 @@
   box-sizing: border-box;
 }
 
+/* Increase base font-size to scale UI up for better readability */
+html {
+  font-size: 18px; /* previously browser default ~16px */
+}
+
 html, body, #root {
   width: 100%;
   height: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
